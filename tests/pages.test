@@ -1,0 +1,941 @@
+tcltest::test cookfsPages-1.1 "Create empty pages as read-write" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages $file]
+} -cleanup {
+    $pg delete
+    catch {file delete -force $file}
+} -returnCodes {ok} -match glob -result {::cookfs::*::pageshandle*}
+
+tcltest::test cookfsPages-1.2 "Create pages as read-write with existing prefix" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set fh [open $file w]
+    puts -nonewline $fh "PrefixTest01"
+    close $fh
+    set pg [cookfs::pages $file]
+    $pg delete
+    set fh [open $file r]
+    set fc [read $fh 12]
+} -cleanup {
+    close $fh
+    catch {file delete -force $file}
+} -returnCodes {ok} -match glob -result {PrefixTest01}
+
+tcltest::test cookfsPages-1.3 "Create pages as read-write with existing prefix and add page" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set fh [open $file w]
+    puts -nonewline $fh "PrefixTest01"
+    close $fh
+    set pg [cookfs::pages $file]
+    $pg add "Test"
+    $pg delete
+    set fh [open $file r]
+    set fc [read $fh 12]
+} -cleanup {
+    close $fh
+    catch {file delete -force $file}
+} -returnCodes {ok} -match glob -result {PrefixTest01}
+
+tcltest::test cookfsPages-1.4 "Create empty pages as read-only" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages -readonly $file]
+} -cleanup {
+    catch {file delete -force $file}
+} -returnCodes {error} -match glob -result {Unable to create Cookfs object*}
+
+tcltest::test cookfsPages-1.5 "Check dataoffset command reporting properly for empty files" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    # make sure no additional data is written to file
+    set fh [open $file w]
+    puts -nonewline $fh ""
+    close $fh
+} -body {
+    set pg [cookfs::pages $file]
+    $pg add "Test"
+    $pg delete
+
+    set pg [cookfs::pages -readonly $file]
+    format %d,%d,%d [$pg dataoffset] [$pg dataoffset 0] [$pg dataoffset 1]
+} -cleanup {
+    $pg delete
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 0,0,5
+
+tcltest::test cookfsPages-1.6 "Check dataoffset command reporting properly for files with prefix" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    # make sure no additional data is written to file
+    set fh [open $file w]
+    puts -nonewline $fh [string repeat TEST 1024]
+    close $fh
+} -body {
+    set pg [cookfs::pages $file]
+    $pg add "Test"
+    $pg delete
+
+    set pg [cookfs::pages -readonly $file]
+    format %d,%d,%d [$pg dataoffset] [$pg dataoffset 0] [$pg dataoffset 1]
+} -cleanup {
+    $pg delete
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 4096,4096,4101
+
+tcltest::test cookfsPages-1.7 "Check filesize command reporting properly for empty archives" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    # make sure no additional data is written to file
+    set fh [open $file w]
+    close $fh
+} -body {
+    set pg [cookfs::pages -compression none $file]
+    $pg add [string repeat "Test" 1024]
+    $pg filesize
+} -cleanup {
+    $pg delete
+    catch {file delete -force $file}
+    # -result is 4097 - 4096+1 byte for page prefix
+} -returnCodes {ok} -result 4097
+
+tcltest::test cookfsPages-1.8 "Check filesize command reporting properly for files with prefix" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    # make sure no additional data is written to file
+    set fh [open $file w]
+    puts -nonewline $fh [string repeat TEST 1024]
+    close $fh
+} -body {
+    set pg [cookfs::pages -compression none $file]
+    $pg add [string repeat "Test" 1024]
+    $pg filesize
+} -cleanup {
+    $pg delete
+    catch {file delete -force $file}
+    # -result is 8193 - 4096+4096+1 byte for page prefix
+} -returnCodes {ok} -result 8193
+
+tcltest::test cookfsPages-2.1 "Test that different pages get different indexes" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages $file]
+    $pg add "TESTx"
+    set i0 [$pg add "TEST00"]
+    set i1 [$pg add "TEST01"]
+    $pg delete
+    expr {($i0 == $i1) ? 1 : 0}
+} -cleanup {
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 0
+
+tcltest::test cookfsPages-2.2 "Test that same pages get same indexes" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages $file]
+    $pg add "TESTx"
+    set i0 [$pg add "TEST00"]
+    set i1 [$pg add "TEST00"]
+    $pg delete
+    expr {($i0 == $i1) ? 1 : 0}
+} -cleanup {
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 1
+
+tcltest::test cookfsPages-2.3 "Test that different pages with same MD5 checksum get different indexes" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages $file]
+    $pg add "TESTx"
+    # MD5 checksum for both values is 79054025255FB1A26E4BC422AEF54EB4
+    set i0 [$pg add [binary format H* d131dd02c5e6eec4693d9a0698aff95c2fcab58712467eab4004583eb8fb7f8955ad340609f4b30283e488832571415a085125e8f7cdc99fd91dbdf280373c5bd8823e3156348f5bae6dacd436c919c6dd53e2b487da03fd02396306d248cda0e99f33420f577ee8ce54b67080a80d1ec69821bcb6a8839396f9652b6ff72a70]]
+    set i1 [$pg add [binary format H* d131dd02c5e6eec4693d9a0698aff95c2fcab50712467eab4004583eb8fb7f8955ad340609f4b30283e4888325f1415a085125e8f7cdc99fd91dbd7280373c5bd8823e3156348f5bae6dacd436c919c6dd53e23487da03fd02396306d248cda0e99f33420f577ee8ce54b67080280d1ec69821bcb6a8839396f965ab6ff72a70]]
+    $pg delete
+    expr {($i0 == $i1) ? 1 : 0}
+} -cleanup {
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 0
+
+tcltest::test cookfsPages-3.1 "Test correctness of pages after write" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    set idxlist {}
+} -body {
+    set pg [cookfs::pages -compression zlib $file]
+    set pages {
+        {string repeat TEST 1}
+        {string repeat TEST 1024}
+        {string repeat TEST 16383}
+        {string repeat TEST 16385}
+    }
+    foreach p $pages {
+        lappend idxlist [$pg add [eval $p]]
+    }
+    $pg delete
+
+    set pg [cookfs::pages -readonly $file]
+    foreach p $pages idx $idxlist {
+        if {![string equal [$pg get $idx] [eval $p]]} {
+            error "Page $idx contains invalid data"
+        }
+    }
+    $pg delete
+} -cleanup {
+    catch {file delete -force $file}
+} -returnCodes {ok}
+
+tcltest::test cookfsPages-3.2 "Test read-only error for adding a page" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages -compression zlib $file]
+    set i0 [$pg add T1]
+    $pg delete
+
+    set pg [cookfs::pages -readonly $file]
+    $pg add T2
+} -cleanup {
+    $pg delete
+    catch {file delete -force $file}
+} -returnCodes {error} -result {Unable to add page}
+
+tcltest::test cookfsPages-3.3 "Test correctness of pages after write - large number of pages" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    set idxlist {}
+    set conlist {}
+} -body {
+    set pg [cookfs::pages -compression zlib $file]
+    for {set i 0} {$i < 64} {incr i} {
+	set contents [string repeat [format PAGE%04d $i] 1024]
+	lappend conlist $contents
+        lappend idxlist [$pg add $contents]
+    }
+    $pg delete
+
+    set pg [cookfs::pages -readonly -cachesize 8 $file]
+    for {set i 0} {$i < 102400} {incr i} {
+	set pr [expr {int(rand() * 64)}]
+	set pi [lindex $idxlist $pr]
+	set pc [lindex $conlist $pr]
+	if {[$pg get $pi] != $pc} {
+	    error "Incorrect page contents - iteration $i, page $pr"
+	}
+    }
+    $pg delete
+} -cleanup {
+    catch {file delete -force $file}
+} -returnCodes {ok}
+
+tcltest::test cookfsPages-3.4 "Test correctness of pages writing with same pages" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    set idxlist {}
+} -body {
+    set pg [cookfs::pages -compression zlib $file]
+    set pages {
+        {string repeat TEST 1}
+        {string repeat TEST 1024}
+        {string repeat TEST 16383}
+        {string repeat TEST 1024}
+        {string repeat TEST 16385}
+        {string repeat TEST 16385}
+    }
+    foreach p $pages {
+        lappend idxlist [$pg add [eval $p]]
+    }
+    $pg delete
+
+    set pg [cookfs::pages -readonly $file]
+    foreach p $pages idx $idxlist {
+        if {![string equal [$pg get $idx] [eval $p]]} {
+            error "Page $idx contains invalid data"
+        }
+    }
+    $pg delete
+} -cleanup {
+    #catch {file delete -force $file}
+} -returnCodes {ok}
+
+tcltest::test cookfsPages-4.1 "Test appended file handling" -constraints cookfsAside -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    set file2 [tcltest::makeFile {} pages2.cfs]
+} -body {
+    set pg [cookfs::pages -compression zlib $file]
+    set i0 [$pg add [string repeat "TEST" 64]]
+    $pg index "Index1"
+    $pg delete
+    file stat $file s0
+
+    set pg [cookfs::pages -readonly $file]
+    $pg aside $file2
+    set i1 [$pg add [string repeat "TEST" 96]]
+    $pg index "Index2"
+    $pg delete
+    file stat $file s1
+
+    if {$s1(size) != $s0(size)} {
+        error "Sizes of $file differ"
+    }
+
+    set pg [cookfs::pages -readonly $file]
+    $pg aside $file2
+
+    if {[$pg index] != "Index2"} {
+        error "Index error"
+    }
+
+    if {[$pg get $i0] != [string repeat "TEST" 64]} {
+        error "Page i0 failed"
+    }
+
+    if {[$pg get $i1] != [string repeat "TEST" 96]} {
+        error "Page i1 failed"
+    }
+} -cleanup {
+    $pg delete
+    catch {file delete -force $file}
+    catch {file delete -force $file2}
+} -returnCodes {ok}
+
+tcltest::test cookfsPages-4.2 "Test appended file handling - adding same page to new archive" -constraints cookfsAside -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    set file2 [tcltest::makeFile {} pages2.cfs]
+} -body {
+    set pg [cookfs::pages -compression zlib $file]
+    set i0 [$pg add [string repeat "TEST" 64]]
+    $pg index "Index1"
+    $pg delete
+    file stat $file s0
+
+    set pg [cookfs::pages -readonly $file]
+    $pg aside $file2
+    set i1 [$pg add [string repeat "TEST" 96]]
+    set i2 [$pg add [string repeat "TEST" 64]]
+    set i3 [$pg add [string repeat "TEST" 96]]
+    set i4 [$pg add [string repeat "TEST" 80]]
+    $pg index "Index2"
+    $pg delete
+    file stat $file s1
+
+    if {$s1(size) != $s0(size)} {
+        error "Sizes of $file differ"
+    }
+
+    set pg [cookfs::pages -readonly $file]
+    $pg aside $file2
+
+    if {[$pg index] != "Index2"} {
+        error "Index error"
+    }
+
+    if {[$pg get $i0] != [string repeat "TEST" 64]} {
+        error "Page i0 failed"
+    }
+
+    if {[$pg get $i1] != [string repeat "TEST" 96]} {
+        error "Page i1 failed"
+    }
+
+    if {$i1 != $i3} {
+        error "Page i3 was not matched correctly"
+    }
+
+    if {$i2 != $i0} {
+        error "Page i2 was created again"
+    }
+
+    if {($i0 == $i4) || ($i1 == $i4) || ($i2 == $i4) || ($i3 == $i4)} {
+        error "Page i4 was reused"
+    }
+} -cleanup {
+    $pg delete
+    catch {file delete -force $file}
+    catch {file delete -force $file2}
+} -returnCodes {ok}
+
+tcltest::test cookfsPages-5.1 "Test specifying -endoffset" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages -compression zlib $file]
+    set i0 [$pg add [string repeat "TEST" 64]]
+    $pg index "Index1"
+    $pg delete
+
+    if {[catch {
+	set pg [cookfs::pages -readonly $file]
+    }]} {
+	error ""
+    }
+    $pg delete
+
+    set size [file size $file]
+    set fh [open $file a]
+    fconfigure $fh -translation binary
+    # add really long suffix that cookfs won't detect
+    puts -nonewline $fh [string repeat ".FILE.SUFFIX." 65536]
+    close $fh
+
+    if {![catch {
+	set pg [cookfs::pages -readonly $file]
+    }]} {
+	error "Opening a file read-only with data added did not throw an error"
+    }
+
+    if {[catch {
+	set pg [cookfs::pages -readonly -endoffset $size $file]
+    } err]} {
+	error "Opening a file with data added and specifying -endoffsert threw an error: $err"
+    }
+
+    if {[$pg get $i0] != [string repeat "TEST" 64]} {
+	error "Reading page $i0 failed"
+    }
+} -cleanup {
+    $pg delete
+    catch {file delete -force $file}
+} -returnCodes {ok}
+
+tcltest::test cookfsPages-5.2 "Check searching for end of archive if endoffset not specified for small file" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    # make sure no additional data is written to file
+    set fh [open $file w]
+    puts -nonewline $fh ""
+    close $fh
+} -body {
+    set pg [cookfs::pages $file]
+    $pg add "Test"
+    $pg delete
+    set fh [open $file a]
+    fconfigure $fh -translation binary
+    puts -nonewline $fh [string repeat TEST 64]
+    close $fh
+
+    set pg [cookfs::pages -readonly $file]
+    $pg dataoffset
+} -cleanup {
+    $pg delete
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 0
+
+tcltest::test cookfsPages-5.3 "Check searching for end of archive if endoffset not specified for large file" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    # make sure no additional data is written to file
+    set fh [open $file w]
+    puts -nonewline $fh ""
+    close $fh
+} -body {
+    set pg [cookfs::pages -compression none $file]
+    $pg add [string repeat "Test" 16384]
+    $pg delete
+    set fh [open $file a]
+    fconfigure $fh -translation binary
+    puts -nonewline $fh [string repeat TEST 64]
+    close $fh
+
+    set pg [cookfs::pages -readonly $file]
+    $pg dataoffset
+} -cleanup {
+    $pg delete
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 0
+
+tcltest::test cookfsPages-6.1 "Test multiple compression algorithms" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages -compression none $file]
+    set i0 [$pg add [string repeat "TESTNONE" 2048]]
+    $pg index "Index0"
+    $pg delete
+
+    set fs0 [file size $file]
+
+    set pg [cookfs::pages -compression zlib $file]
+    if {![string equal [$pg get $i0] [string repeat "TESTNONE" 2048]]} {
+	error "Incorrect uncompressed page contents after first attempt"
+    }
+
+    set i1 [$pg add [string repeat "TESTZLIB" 2048]]
+    set i [$pg index]
+    if {![string equal $i "Index0"]} {
+	error "Incorrect index-$i ([string length $i])"
+    }
+    $pg index "Index1-$i"
+    $pg delete
+
+    set fs1 [file size $file]
+    if {($fs1 - $fs0) > 1024} {
+	error "Next page not compressed using zlib"
+    }
+
+    if {[catch {
+	set pg [cookfs::pages -readonly $file]
+    }]} {
+	error "Unable to read pages after changing compression"
+    }
+
+    set i [$pg index]
+    if {![string equal $i "Index1-Index0"]} {
+	error "Incorrect index-$i ([string length $i])"
+    }
+
+    if {![string equal [$pg get $i0] [string repeat "TESTNONE" 2048]]} {
+	error "Incorrect uncompressed page contents"
+    }
+
+    if {![string equal [$pg get $i1] [string repeat "TESTZLIB" 2048]]} {
+	error "Incorrect uncompressed page contents"
+    }
+} -cleanup {
+    catch {file delete -force $file}
+} -returnCodes {ok}
+
+tcltest::test cookfsPages-7.1 "Test custom compression algorithm" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages -compression custom -compresscommand testcompress -decompresscommand testdecompress $file]
+    set i0 [$pg add [string repeat "TEST" 1024]]
+    $pg delete
+
+    set fh [open $file r]
+    fconfigure $fh -translation binary
+    set fc [read $fh]
+    close $fh
+
+    if {![string match *HEXTEST* $fc]} {
+	error "Not used testcompress command"
+    }
+    set pg [cookfs::pages -readonly -compression custom -compresscommand testcompress -decompresscommand testdecompress $file]
+    if {![string equal [string repeat "TEST" 1024] [$pg get $i0]]} {
+	$pg delete
+	error "Page contents differs"
+    }
+    $pg delete
+} -cleanup {
+    catch {file delete -force $file}
+} -returnCodes {ok}
+
+tcltest::test cookfsPages-7.2 "Test custom compression algorithm - no decompress command error" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages -compression custom -compresscommand testcompress $file]
+    set i0 [$pg add [string repeat "TEST" 1024]]
+    $pg delete
+
+    set pg [cookfs::pages -readonly -compression custom -compresscommand testcompress $file]
+    $pg get $i0
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {error} -result {Unable to retrieve chunk}
+
+tcltest::test cookfsPages-7.3 "Test custom compression algorithm - no decompress command error when adding same page" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages -compression custom -compresscommand testcompress $file]
+    set i0 [$pg add [string repeat "TEST" 1024]]
+    set i1 [$pg add [string repeat "TEST" 1024]]
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {error} -result {Unable to add page}
+
+tcltest::test cookfsPages-7.4 "Test custom compression algorithm not used when size would not be smaller" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages -compression custom -compresscommand testcompress -decompresscommand testdecompress $file]
+    set data {QWERTYUIOPASDFGHJKLZXCVBNM0123456789}
+    set i0 [$pg add $data]
+    $pg delete
+
+    set fh [open $file r]
+    fconfigure $fh -translation binary
+    set fc [read $fh]
+    close $fh
+
+    if {[string match *HEXTEST* $fc]} {
+	error "Used testcompress command"
+    }
+    set pg [cookfs::pages -readonly -compression custom -compresscommand testcompress -decompresscommand testdecompress $file]
+    if {![string equal $data [$pg get $i0]]} {
+	$pg delete
+	error "Page contents differs"
+    }
+    $pg delete
+} -cleanup {
+    catch {file delete -force $file}
+} -returnCodes {ok}
+
+tcltest::test cookfsPages-7.5 "Test custom compression algorithm not used when size would not be smaller with -alwayscompress" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages -compression custom -compresscommand testcompress -decompresscommand testdecompress -alwayscompress $file]
+    set data {QWERTYUIOPASDFGHJKLZXCVBNM0123456789}
+    set i0 [$pg add $data]
+    $pg delete
+
+    set fh [open $file r]
+    fconfigure $fh -translation binary
+    set fc [read $fh]
+    close $fh
+
+    if {![string match *HEXTEST* $fc]} {
+	error "Not used testcompress command"
+    }
+    set pg [cookfs::pages -readonly -compression custom -compresscommand testcompress -decompresscommand testdecompress $file]
+    if {![string equal $data [$pg get $i0]]} {
+	$pg delete
+	error "Page contents differs"
+    }
+    $pg delete
+} -cleanup {
+    catch {file delete -force $file}
+} -returnCodes {ok}
+
+tcltest::test cookfsPages-8.1 "Test returning offset to end of file during close without changes" -setup {
+    set file [tcltest::makeFile {TESTTEST} pages.cfs]
+} -body {
+    set pg [cookfs::pages $file]
+    set offset [$pg close]
+    $pg delete
+    expr {[file size $file] == $offset}
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 1
+
+tcltest::test cookfsPages-8.2 "Test returning offset to end of file during close with changes" -setup {
+    set file [tcltest::makeFile {TESTTEST} pages.cfs]
+} -body {
+    set pg [cookfs::pages $file]
+    $pg add TEST
+    set offset [$pg close]
+    $pg delete
+    expr {[file size $file] == $offset}
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 1
+
+tcltest::test cookfsPages-8.3 "Test returning offset to end of file during close without changes when remounting" -setup {
+    set file [tcltest::makeFile {TESTTEST} pages.cfs]
+} -body {
+    set pg [cookfs::pages $file]
+    $pg add TEST
+    $pg delete
+
+    set pg [cookfs::pages $file]
+    set offset [$pg close]
+    $pg delete
+    expr {[file size $file] == $offset}
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 1
+
+tcltest::test cookfsPages-8.4 "Test returning offset when overwriting appended data" -setup {
+    set file [tcltest::makeFile {TESTTEST} pages.cfs]
+} -body {
+    set pg [cookfs::pages $file]
+    $pg add TEST
+    set offset [$pg close]
+    $pg delete
+
+    set fh [open $file a]
+    fconfigure $fh -translation binary
+    puts -nonewline $fh [string repeat . 1024]
+    close $fh
+
+    for {set i 0} {$i < 1024} {incr i} {
+        set pg [cookfs::pages -endoffset $offset $file]
+        set idx [$pg add TEST$i]
+        set offset [$pg close]
+        $pg delete
+    }
+
+    set pg [cookfs::pages -endoffset $offset $file]
+    $pg length
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 1025
+
+tcltest::test cookfsPages-9.1 "Test only changing index information" -setup {
+    set file [tcltest::makeFile {TESTTEST} pages.cfs]
+} -body {
+    set pg [cookfs::pages $file]
+    $pg add TEST
+    $pg index IDX0
+    set offset [$pg close]
+    $pg delete
+
+    set pg [cookfs::pages $file]
+    $pg index IDX1
+    $pg delete
+
+    set pg [cookfs::pages $file]
+    $pg index
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {ok} -result IDX1
+
+tcltest::test cookfsPages-10.1 "Test crc32 checksum algorithm" -setup {
+    set file [tcltest::makeFile {TESTTEST} pages.cfs]
+} -body {
+    set pg [cookfs::pages $file]
+    $pg hash crc32
+    set i0 [$pg add TEST]
+    set i1 [$pg add TEST]
+    expr {$i0 == $i1}
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 1
+
+tcltest::test cookfsPages-10.2 "Test crc32 checksum algorithm fail if not re-set" -setup {
+    set file [tcltest::makeFile {TESTTEST} pages.cfs]
+} -body {
+    set pg [cookfs::pages $file]
+    $pg hash crc32
+    set i0 [$pg add TEST]
+
+    $pg delete
+    set pg [cookfs::pages $file]
+    set i1 [$pg add TEST]
+    expr {$i0 != $i1}
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 1
+
+tcltest::test cookfsPages-10.3 "Test crc32 checksum algorithm after re-reading" -setup {
+    set file [tcltest::makeFile {TESTTEST} pages.cfs]
+} -body {
+    set pg [cookfs::pages $file]
+    $pg hash crc32
+    set i0 [$pg add TEST]
+
+    $pg delete
+    set pg [cookfs::pages $file]
+    $pg hash crc32
+    set i1 [$pg add TEST]
+    expr {$i0 == $i1}
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 1
+
+tcltest::test cookfsPages-10.4 "Test crc32 with large chunks" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages -compression custom -compresscommand testcompress $file]
+    $pg hash crc32
+    set i0 [$pg add [string repeat "TEST" 1024]]
+    set i1 [$pg add [string repeat "TEST" 1024]]
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {error} -result {Unable to add page}
+
+tcltest::test cookfsPages-11.1 "Test increasing page cache" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    set il {}
+} -body {
+    set pg [cookfs::pages -compression custom -compresscommand testcompress -decompresscommand testdecompress $file]
+    for {set i 0} {$i < 20} {incr i} {
+        lappend il $i [$pg add [string repeat "TEST" 1024][string repeat "TEST" $i]"]
+    }
+    $pg delete
+
+    set pg [cookfs::pages -compression custom -compresscommand testcompress -decompresscommand testdecompress -cachesize 0 $file]
+    $pg cachesize 32
+    set ::testdecompresscount 0
+    foreach {i idx} $il {
+        $pg get $idx
+    }
+    set ::testdecompresscount
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 20
+
+tcltest::test cookfsPages-11.2 "Test decreasing page cache" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    set il {}
+} -body {
+    set pg [cookfs::pages -compression custom -compresscommand testcompress -decompresscommand testdecompress $file]
+    for {set i 0} {$i < 20} {incr i} {
+        lappend il $i [$pg add [string repeat "TEST" 1024][string repeat "TEST" $i]"]
+    }
+    $pg delete
+
+    set pg [cookfs::pages -compression custom -compresscommand testcompress -decompresscommand testdecompress -cachesize 32 $file]
+    $pg cachesize 32
+    set ::testdecompresscount 0
+    foreach {i idx} $il {
+        $pg get $idx
+    }
+    $pg cachesize 0
+    $pg cachesize 32
+    set ::testdecompresscount 0
+    foreach {i idx} $il {
+        $pg get $idx
+    }
+    set ::testdecompresscount
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {ok} -result 20
+
+tcltest::test cookfsPages-12.1 "Test changing page compression" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages -compression zlib $file]
+    for {set i 0} {$i < 20} {incr i} {
+        lappend il $i [$pg add [string repeat "TEST" 1024][string repeat "TEST" $i]"]
+    }
+
+    $pg compression none
+
+    $pg index [string repeat "INDX" 1024]
+    $pg delete
+
+    set fh [open $file r]
+    fconfigure $fh -translation binary
+    set fc [read $fh]
+    close $fh
+
+    if {[string first [string repeat "TEST" 1024] $fc] >= 0} {
+        error "Pages not compressed properly"
+    }
+
+    if {[string first [string repeat "INDX" 1024] $fc] < 0} {
+        error "Index compressed incorrectly"
+    }
+
+    set pg [cookfs::pages $file]
+
+    if {![string equal [$pg index] [string repeat "INDX" 1024]]} {
+        error "Invalid index after compression change"
+    }
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {ok}
+
+tcltest::test cookfsPages-12.2 "Test getting current page compression" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages -compression zlib $file]
+    if {[$pg compression] != "zlib"} {
+	error "Getting initial compression as zlib failed"
+    }
+    $pg compression none
+    if {[$pg compression] != "none"} {
+	error "Getting compression as none failed - [$pg compression] returned"
+    }
+
+    $pg compression custom
+    if {[$pg compression] != "custom"} {
+	error "Getting compression as custom failed - [$pg compression] returned"
+    }
+
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {ok}
+
+tcltest::test cookfsPages-13.1 "Error message when index not found" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+} -body {
+    set pg [cookfs::pages -readonly $file]
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {error} -match glob -result {Unable to create Cookfs object: index not found}
+
+tcltest::test cookfsPages-13.2 "Error message when invalid signature found" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    set pg [cookfs::pages -compression none $file]
+    $pg add [string repeat TEST 32]
+    $pg delete
+
+    set fh [open $file r]
+    fconfigure $fh -translation binary
+    set fc [read $fh]
+    close $fh
+    
+    set fh [open $file w]
+    fconfigure $fh -translation binary
+    puts -nonewline $fh [string map [list CFS0002 CFSTEST] $fc]
+    close $fh
+} -body {
+    set pg [cookfs::pages -readonly $file]
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {error} -match glob -result {Unable to create Cookfs object: invalid file signature}
+
+tcltest::test cookfsPages-13.3 "Error message when unable to seek to pages" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    set pg [cookfs::pages -compression none $file]
+    $pg add 1
+    $pg add 2
+    $pg add 3
+    set size [file size $file]
+    $pg delete
+
+    set fh [open $file r]
+    fconfigure $fh -translation binary
+    set fc [read $fh]
+    close $fh
+    
+    set fh [open $file w]
+    fconfigure $fh -translation binary
+    puts -nonewline $fh [string range $fc [expr {$size + 16}] end]
+    close $fh
+} -body {
+    set pg [cookfs::pages -readonly $file]
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {error} -match glob -result {Unable to create Cookfs object: page sizes not found}
+
+tcltest::test cookfsPages-13.4 "Error message when specifying invalid -endoffset" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    set pg [cookfs::pages -compression none $file]
+    $pg add 1
+    $pg add 2
+    $pg add 3
+    set size [file size $file]
+    $pg delete
+} -body {
+    set pg [cookfs::pages -readonly -endoffset -1 $file]
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {error} -match glob -result {Unable to create Cookfs object: index not found}
+
+# TODO: this test should generate same results in Tcl and C version of the library
+tcltest::test cookfsPages-13.5 "Error message when specifying directory" -setup {
+    set file [tcltest::makeDirectory pages.cfs]
+} -body {
+    set pg [cookfs::pages -readonly $file]
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {error} -match glob -result {Unable to create Cookfs object: *}
+
+tcltest::test cookfsPages-13.6 "Error message when specifying directory and -endoffset" -setup {
+    set file [tcltest::makeDirectory pages.cfs]
+} -body {
+    set pg [cookfs::pages -endoffset 1 -readonly $file]
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {error} -match glob -result {Unable to create Cookfs object: index not found}
+
+tcltest::test cookfsPages-13.7 "Error message when specifying non-existing file" -setup {
+    set file [tcltest::makeFile {} pages.cfs]
+    catch {file delete -force $file}
+} -body {
+    set pg [cookfs::pages -readonly $file]
+} -cleanup {
+    catch {$pg delete}
+    catch {file delete -force $file}
+} -returnCodes {error} -match glob -result {Unable to create Cookfs object: couldn't open "*": no such file or directory}
+
